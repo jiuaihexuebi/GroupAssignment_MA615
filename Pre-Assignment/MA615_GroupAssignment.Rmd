@@ -1,0 +1,225 @@
+---
+title: "MA615_GroupAssignment"
+author: "Becky Yu , Mira Tang , Kecheng Liang , Chaoqun Yin"
+date: "September 30, 2018"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load("knitr","tidyverse","readxl","kableExtra","ggplot2","maps","plotly")
+```
+
+We got the dataset from the [Suspicious Activities Report statistics](https://www.fincen.gov/reports/sar-stats) tool. After filtering specific industries (Insurance Company, Loan or Finance Company, Money Services BUsiness and Securities/Futures) and suspicious activities(Fraud), we got a dataset with 43454 observations of 8 variables. Looking into the data, we found that observations with "[Total]" entries were summarized data that should be seprated from raw data, so we removed those entires and ended with 23890 observations.
+
+## Data Cleaning
+```{r}
+#Import data
+Finance <- read.csv("SARStats.csv")
+#View(Finance)
+summary(Finance)
+
+#Eliminate meaningless data
+Finance <- filter(Finance, !(str_detect(string = Finance$State,pattern = "\\[Total\\]")))
+Finance <- filter(Finance, !(str_detect(string = Finance$Industry,pattern = "\\[Total\\]")))
+Finance <- filter(Finance, !(str_detect(string = Finance$Product,pattern = "\\[Total\\]")))
+Finance <- filter(Finance, !(str_detect(string = Finance$Instrument,pattern = "\\[Total\\]")))
+Finance <- filter(Finance, !(str_detect(string = Finance$Suspicious.Activity,pattern = "\\[Total\\]")))
+Finance <- filter(Finance, !(str_detect(string = Finance$Regulator,pattern = "\\[Total\\]")))
+Finance <- filter(Finance, !(str_detect(string = Finance$Year.Month,pattern = "\\[Total\\]")))
+
+#rename the inappropriate column name
+colnames(Finance)[1]<-"Year"
+
+#Transform the type of data
+Finance$Count <- as.numeric(Finance$Count)
+```
+
+##EDA
+
+### State
+
+Firstly, let us take a quick look at the total count of frauds reported in 2017 for each state:
+
+```{r}
+Finance %>% 
+  group_by(Year,State) %>% 
+  summarise(State_Total_Count = sum(as.numeric(Count)))-> State1
+
+#load us map data
+all_states <- map_data("state")
+
+#mutate the count data into map data
+State2017<-State1[which(as.character(State1$Year)=='2017 '),]
+State2017$State<-tolower(State2017$State)
+s<-State2017$State
+for (i in 1:length(s)){
+  if (s[i] %in% unique(all_states$region)){
+    all_states[which(all_states$region==s[i]),"count2017"]<-State2017$State_Total_Count[i]
+  }
+}
+
+#plot all states with ggplot
+ggplot(all_states)+
+  geom_polygon(aes(x=long, y=lat, group = group,fill=count2017),colour="white" )
+
+```
+
+Next, here are the boxplots of total counts of all states per year:
+```{r}
+ggplot(State1, aes(x=Year, y=State_Total_Count))+
+  geom_boxplot()+
+  coord_flip()
+```
+
+From the boxplot, we can compare the numbers of fraud cases from 2012 to 2018 easily. From 2012 to 2017, the total number of fraud cases has a obvious trend of increasing. 
+
+
+#### Make a table
+```{r}
+#get a summarized dataframe with top five states for each year
+Finance %>% 
+  group_by(Year , State) %>% 
+  summarise(Total_Count = sum(as.numeric(Count))) %>% 
+  arrange(Year,desc(Total_Count)) %>% 
+  slice(1:5) -> State2
+
+#tidy the long table using string concating skills
+table1<-aggregate(State~Year,data =State2,paste,collapse=",")
+table2<-aggregate(Total_Count~Year,data =State2,paste,collapse=",")
+
+#join the sub tables
+table<-left_join(table1,table2,by="Year")
+kable(table,caption = "Top five States each year", "html" ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+#### Make a plot
+```{r}
+ggplot(State2,aes(x = Year,y = Total_Count,fill = State))+
+  geom_bar(stat = 'identity',position = 'stack') +
+  labs(title = "Top Five States That Most Frauds Were Reported- Becky Yu")
+```
+
+The count of frauds reported increased largely through the last few years. Since the data of 2018 has not been complete yet, we may still predict a trend of growth. California and New York were typically among the top five States that most frauds were reported. Massachusetts ranked first in 2013 and 2014, but ended with fifth in 2015, 2016 and 2017.
+
+### Industry
+```{r}
+Finance %>% group_by(Year,Industry)  %>%  
+  summarize(Count = sum(Count)) %>%
+  arrange(Year,desc(Count)) -> Finance.ind
+```
+
+First of all, we can see how count change with year and industry through the contour plot.
+```{r}
+plot_ly(
+  x = Finance.ind$Year, 
+  y = Finance.ind$Industry, 
+  z = Finance.ind$Count, 
+  type = "contour" 
+)
+```
+
+#### Make a table
+```{r}
+#table grouped by year
+kable(Finance.ind[,c(2,3)], caption = "Securities/Futures Suspicious Activity Reports by Industry" , "html" ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  group_rows("2012", 1, 3) %>%
+  group_rows("2013", 4, 6) %>%
+  group_rows("2014", 7, 10) %>%
+  group_rows("2015", 11, 14) %>%
+  group_rows("2016", 15, 18) %>%
+  group_rows("2017", 19, 22) %>%
+  group_rows("2018", 23, 26)
+```
+
+#### Make a plot
+```{r}
+ggplot(Finance.ind,aes(x = Year , Count ,fill = Industry)) +
+  geom_bar(stat = "identity",position = "fill",width = 0.8) +
+  coord_polar(theta = "x") +
+  labs(title = "Mira Tang")
+```
+
+We can know from the plot that MSB is the most frequent industry reported securities/futures suspicious activity in each year. Although insurance company's suspicious activities happend a lot in 2012, it decreased by year.
+
+### Suspicious Activities
+```{r}
+#Select some useful columns from the database
+suspicion <- select(Finance, Year, Suspicious.Activity, Count)
+
+# Change the column's name
+colnames(suspicion)[1] <- "Year"
+suspicion %>%
+  group_by(Year, Suspicious.Activity) %>%
+  summarize(Count = sum(Count)) %>%
+  arrange(Year, desc(Count)) %>%
+  slice(1:3) -> sus.table
+```
+
+#### Make a table
+```{r}
+kable(sus.table, caption = "Top 5 Reported Susicious Activities by Years") %>%
+  kable_styling(bootstrap_options = c("striped") )
+```
+
+#### Make a plot
+```{r}
+ggplot(suspicion, aes(x = Year, y = Count, fill = Suspicious.Activity)) +
+  geom_col(position = "stack") +
+  labs(title = "Kecheng Liang")
+```
+
+The graph shows that we should pay more attetion on wire, credit/debit card, and check.
+
+### Regulator
+```{r,message=FALSE}
+#Seclect specific olumns for analysis
+regulator <- select(Finance, Year, Regulator, Count)
+
+#More data cleaning eliminating "Not Applicable"
+regulator$Regulator <- str_replace_all(regulator$Regulator, fixed(" "), "")
+regulator <- filter(regulator, !str_detect(string = regulator$Regulator,"NotApplicable"))
+```
+
+#### Make a table
+```{r}
+regulator %>% group_by(Year,Regulator) %>% 
+  summarize(Count=sum(Count)) %>% 
+  arrange(Year,desc(Count)) %>%
+  slice(1:3)-> sus.table
+
+kable(sus.table, caption = "Top 3 Regulators against Criminal Each Year") %>%
+  kable_styling(bootstrap_options = c("striped") )
+```
+
+#### Make a plot of the regulators vs. fraud case count
+```{r}
+ggplot(regulator , aes(x = Year,y = Count,fill = Regulator)) + 
+  geom_col(position = "stack") + 
+  labs(title = "The regulators vs. Fraud case count - Chaoqun Yin")
+```
+
+From the plot, the fraud cases charged by IRS increase greatly from 2012 to 2016. Then in 2016, the fraud cases charged by IRS get to the peek then the numbers started to decrease. Among all the data points in the plot, the most financial criminal cases are handled by IRS and SEC during the 7 years.
+
+## Conclusion
+* As for the numbers of fraud cases in different states:
+
+From the map plot and boxplot, we can compare the numbers of fraud cases in different states from 2012 to 2018 easily. From 2012 to 2017, the total number of fraud cases has a obvious trend of increasing.Then, the count of frauds reported increased largely through the last few years. Since the data of 2018 has not been complete yet, we may still predict a trend of growth. California and New York were typically among the top five States that most frauds were reported. Massachusetts ranked first in 2013 and 2014, but ended with fifth in 2015, 2016 and 2017.
+
+* As for the fraud cases reported in different industries:
+
+We can know from the plot that MSB is the most frequent industry reported securities/futures suspicious activity in each year. Although insurance company's suspicious activities happend a lot in 2012, it decreased by year. But the fraud cases reported in MSB have a trend of increasing, so we should be extremly cautious about the industry. 
+
+* As for the suspicious activity type of fraud cases:
+
+The wire, mail and debit/credit card are often used by criminals to make fraud. And from the plot we can see that ACH type are used more frequently recent years, so we can predict that it will continue increasing in 2018. We should be caucious about this new kind of financial derivatives.
+
+* As the regulators against the fraud actions:
+
+The fraud cases charged by IRS increase greatly from 2012 to 2016. Then in 2016, the fraud cases charged by IRS get to the peek then the numbers started to decrease. It is suggested by the plot that FRB plays more and more important role in the recent years against fraud criminals. Among all the data points in the plot, the most financial criminal cases are handled by IRS, SEC and FRB during the 7 years from 2012 to 2018. 
